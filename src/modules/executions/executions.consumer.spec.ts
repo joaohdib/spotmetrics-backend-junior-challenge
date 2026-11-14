@@ -34,6 +34,23 @@ describe('ExecutionsConsumer.process', () => {
     expect(service.addTokensUsed).not.toHaveBeenCalled();
   });
 
+  it.each([ExecutionStatus.PENDING, ExecutionStatus.PROCESSING])(
+    'conclui execução já aceita com status %s mesmo com agente inativo',
+    async (status) => {
+      const execution = { id: 'e1', agentId: 'a1', input: 'hello world', inputTokens: 2, status };
+      const { consumer, executions, service } = build(execution, { id: 'a1', name: 'Bot', active: false });
+
+      await consumer.process('e1');
+
+      expect(execution.status).toBe(ExecutionStatus.COMPLETED);
+      expect(executions.save).toHaveBeenLastCalledWith(expect.objectContaining({
+        status: ExecutionStatus.COMPLETED,
+        output: expect.any(String),
+      }));
+      expect(service.addTokensUsed).toHaveBeenCalledWith('a1', expect.any(String), execution['totalTokens']);
+    },
+  );
+
   it('skips unknown executions', async () => {
     const { consumer, executions } = build(null, null);
 

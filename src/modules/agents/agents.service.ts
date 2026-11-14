@@ -36,6 +36,13 @@ export class AgentsService {
     return this.agents.save(this.agents.merge(agent, dto));
   }
 
+  async deactivate(id: string): Promise<void> {
+    const agent = await this.findOne(id);
+    if (!agent.active) return;
+    agent.active = false;
+    await this.agents.save(agent);
+  }
+
   async getUsage(id: string, month: string = currentMonth()) {
     const agent = await this.findOne(id);
     const row = await this.usage.findOne({ where: { agentId: id, month } });

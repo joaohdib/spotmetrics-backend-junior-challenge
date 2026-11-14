@@ -8,7 +8,7 @@ import { AgentsService, currentMonth } from './agents.service';
 
 const agentId = '690b224a-f858-4ed1-a430-b899a7e27f85';
 
-describe('PATCH /agents/:id', () => {
+describe('AgentsController: PATCH e DELETE /agents/:id', () => {
   let app: INestApplication;
   let baseUrl: string;
   let agent: Agent;
@@ -68,6 +68,64 @@ describe('PATCH /agents/:id', () => {
       body: JSON.stringify(body),
     });
   }
+
+  describe('DELETE /agents/:id', () => {
+    function deactivate(id = agentId) {
+      return fetch(`${baseUrl}/agents/${id}`, { method: 'DELETE' });
+    }
+
+    it('desativa sem corpo e mantém o agente e o consumo disponíveis para consulta', async () => {
+      const expected = JSON.parse(JSON.stringify({ ...agent, active: false }));
+      const response = await deactivate();
+      expect(response.status).toBe(204);
+      expect(await response.text()).toBe('');
+      expect(agents.save).toHaveBeenCalledTimes(1);
+      expect(agents.save).toHaveBeenCalledWith(expect.objectContaining({ id: agentId, active: false }));
+      expect(usage.save).not.toHaveBeenCalled();
+
+      const detail = await fetch(`${baseUrl}/agents/${agentId}`);
+      expect(detail.status).toBe(200);
+      expect(await detail.json()).toEqual(expected);
+      const consumptionResponse = await fetch(`${baseUrl}/agents/${agentId}/usage?month=${consumption.month}`);
+      expect(consumptionResponse.status).toBe(200);
+      expect(await consumptionResponse.json()).toMatchObject({ tokensUsed: 700, monthlyTokenLimit: 1000 });
+    });
+
+    it('retorna 204 ao repetir DELETE sem gravar novamente', async () => {
+      expect((await deactivate()).status).toBe(204);
+      const repeated = await deactivate();
+      expect(repeated.status).toBe(204);
+      expect(await repeated.text()).toBe('');
+      expect(agents.save).toHaveBeenCalledTimes(1);
+    });
+
+    it('não grava um agente que já estava inativo', async () => {
+      agent.active = false;
+      expect((await deactivate()).status).toBe(204);
+      expect(agents.save).not.toHaveBeenCalled();
+    });
+
+    it('retorna 404 para agente inexistente', async () => {
+      agents.findOne.mockResolvedValueOnce(null);
+      const response = await deactivate();
+      expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({ message: `Agent ${agentId} not found` });
+      expect(agents.save).not.toHaveBeenCalled();
+    });
+
+    it('retorna 400 para UUID inválido antes de acessar o banco', async () => {
+      expect((await deactivate('invalid')).status).toBe(400);
+      expect(agents.findOne).not.toHaveBeenCalled();
+      expect(agents.save).not.toHaveBeenCalled();
+    });
+
+    it('permite reativar o agente pelo PATCH', async () => {
+      await deactivate();
+      const response = await patch({ active: true });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ id: agentId, active: true });
+    });
+  });
 
   it('updates only the name and preserves every other field', async () => {
     const expected = JSON.parse(JSON.stringify({ ...agent, name: 'Renamed' }));

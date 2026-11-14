@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
-import { ApiBadRequestResponse, ApiBody, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { ApiBadRequestResponse, ApiBody, ApiNoContentResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { AgentsService } from './agents.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
@@ -50,6 +50,16 @@ export class AgentsController {
   @ApiOperation({ summary: 'Busca agente por id' })
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.agentsService.findOne(id);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Desativa um agente', description: 'Preserva o histórico e o consumo. Execuções já aceitas continuam; PATCH com active: true reativa o agente.' })
+  @ApiNoContentResponse({ description: 'Agente desativado ou já inativo. Sem corpo de resposta.' })
+  @ApiBadRequestResponse({ description: 'UUID inválido.' })
+  @ApiNotFoundResponse({ description: 'Agente não encontrado.' })
+  deactivate(@Param('id', ParseUUIDPipe) id: string) {
+    return this.agentsService.deactivate(id);
   }
 
   @Get(':id/usage')

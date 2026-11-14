@@ -29,6 +29,18 @@ function build(overrides: { usage?: number; agent?: object | null; publishFails?
 }
 
 describe('ExecutionsService.create', () => {
+  it('recusa agente inativo com 409 antes de consultar a cota ou criar uma execução', async () => {
+    const { service, usage, executions, rabbit } = build({ agent: { ...agent, active: false } });
+    await expect(service.create('a1', { input: 'hello' })).rejects.toMatchObject({
+      status: 409,
+      message: 'Agente inativo não aceita novas execuções. Reative o agente para continuar.',
+    });
+    expect(usage.findOne).not.toHaveBeenCalled();
+    expect(executions.create).not.toHaveBeenCalled();
+    expect(executions.save).not.toHaveBeenCalled();
+    expect(rabbit.publish).not.toHaveBeenCalled();
+  });
+
   it('creates a PENDING execution and publishes to the queue', async () => {
     const { service, rabbit } = build();
     const result = await service.create('a1', { input: 'one two three' });

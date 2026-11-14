@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
-import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { ApiBadRequestResponse, ApiBody, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { AgentsService } from './agents.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
+import { UpdateAgentDto } from './dto/update-agent.dto';
 
 @ApiTags('agents')
 @Controller('agents')
@@ -18,6 +19,31 @@ export class AgentsController {
   @ApiOperation({ summary: 'Lista agentes' })
   findAll() {
     return this.agentsService.findAll();
+  }
+
+  @Patch(':id')
+  @ApiOperation({ summary: 'Atualiza um agente' })
+  @ApiBody({ type: UpdateAgentDto, description: 'Atualização parcial: campos omitidos são preservados e {} não altera valores.' })
+  @ApiOkResponse({
+    description: 'Agente atualizado.',
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', format: 'uuid' },
+        name: { type: 'string' },
+        description: { type: 'string', nullable: true },
+        systemPrompt: { type: 'string' },
+        active: { type: 'boolean' },
+        monthlyTokenLimit: { type: 'integer' },
+        createdAt: { type: 'string', format: 'date-time' },
+        updatedAt: { type: 'string', format: 'date-time' },
+      },
+    },
+  })
+  @ApiBadRequestResponse({ description: 'UUID inválido, campos inválidos ou propriedades desconhecidas no body.' })
+  @ApiNotFoundResponse({ description: 'Agente não encontrado.' })
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateAgentDto) {
+    return this.agentsService.update(id, dto);
   }
 
   @Get(':id')

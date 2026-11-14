@@ -14,6 +14,7 @@ import { currentMonth } from '../agents/agents.service';
 import { RabbitMQService } from '../../common/rabbitmq/rabbitmq.service';
 import { AgentExecution } from './agent-execution.entity';
 import { CreateExecutionDto } from './dto/create-execution.dto';
+import { ListExecutionsQueryDto } from './dto/list-executions-query.dto';
 import { ExecutionStatus } from './execution-status.enum';
 import { countTokens } from './tokens';
 
@@ -77,6 +78,20 @@ export class ExecutionsService {
     const execution = await this.executions.findOne({ where: { id } });
     if (!execution) throw new NotFoundException(`Execution ${id} not found`);
     return execution;
+  }
+
+  async findByAgent(agentId: string, query: ListExecutionsQueryDto) {
+    const agent = await this.agents.findOne({ where: { id: agentId } });
+    if (!agent) throw new NotFoundException(`Agent ${agentId} not found`);
+
+    const { page, limit, status } = query;
+    const [items, total] = await this.executions.findAndCount({
+      where: { agentId, ...(status !== undefined ? { status } : {}) },
+      order: { createdAt: 'DESC', id: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+    return { items, page, limit, total };
   }
 
   async getTokensUsed(agentId: string, month: string): Promise<number> {

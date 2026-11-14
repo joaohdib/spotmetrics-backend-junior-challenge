@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestj
 import { ApiBadRequestResponse, ApiConflictResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { CreateExecutionDto } from './dto/create-execution.dto';
 import { ListExecutionsQueryDto } from './dto/list-executions-query.dto';
+import { AgentMetricsResponseDto } from './dto/agent-metrics-response.dto';
 import { ExecutionStatus } from './execution-status.enum';
 import { ExecutionsService } from './executions.service';
 
@@ -56,5 +57,15 @@ export class ExecutionsController {
   @Get('executions/:id')
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.executionsService.findOne(id);
+  }
+
+  @Get('agents/:agentId/metrics')
+  @ApiOperation({ summary: 'Consulta as métricas de um agente', description: 'Disponível também para agentes inativos. Usa todo o histórico; o consumo e a média consideram apenas execuções COMPLETED, sendo a quantidade de concluídas o denominador da média.' })
+  @ApiParam({ name: 'agentId', type: String, format: 'uuid' })
+  @ApiOkResponse({ description: 'Métricas do histórico; todos os campos são zero quando não há execuções.', type: AgentMetricsResponseDto })
+  @ApiBadRequestResponse({ description: 'UUID inválido.' })
+  @ApiNotFoundResponse({ description: 'Agente não encontrado.' })
+  getMetrics(@Param('agentId', ParseUUIDPipe) agentId: string) {
+    return this.executionsService.getMetrics(agentId);
   }
 }

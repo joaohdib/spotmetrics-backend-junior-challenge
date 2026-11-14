@@ -15,6 +15,7 @@ import { RabbitMQService } from '../../common/rabbitmq/rabbitmq.service';
 import { AgentExecution } from './agent-execution.entity';
 import { CreateExecutionDto } from './dto/create-execution.dto';
 import { ListExecutionsQueryDto } from './dto/list-executions-query.dto';
+import { AgentMetricsResponseDto } from './dto/agent-metrics-response.dto';
 import { ExecutionStatus } from './execution-status.enum';
 import { countTokens } from './tokens';
 
@@ -81,8 +82,7 @@ export class ExecutionsService {
   }
 
   async findByAgent(agentId: string, query: ListExecutionsQueryDto) {
-    const agent = await this.agents.findOne({ where: { id: agentId } });
-    if (!agent) throw new NotFoundException(`Agent ${agentId} not found`);
+    await this.findAgent(agentId);
 
     const { page, limit, status } = query;
     const [items, total] = await this.executions.findAndCount({
@@ -92,6 +92,34 @@ export class ExecutionsService {
       take: limit,
     });
     return { items, page, limit, total };
+  }
+
+  async getMetrics(agentId: string): Promise<AgentMetricsResponseDto> {
+    await this.findAgent(agentId);
+
+    const raw = await this.executions.createQueryBuilder('execution')
+      .select('COUNT(*)', 'totalExecutions')
+      .addSelect('COUNT(*) FILTER (WHERE execution.status = :completed)', 'completedExecutions')
+      .addSelect('COUNT(*) FILTER (WHERE execution.status = :failed)', 'failedExecutions')
+      .addSelect('COALESCE(SUM(execution.totalTokens) FILTER (WHERE execution.status = :completed), 0)', 'totalTokensConsumed')
+      .addSelect('COALESCE(AVG(execution.totalTokens) FILTER (WHERE execution.status = :completed), 0)', 'averageTokensPerExecution')
+      .where('execution.agentId = :agentId', { agentId })
+      .setParameters({ completed: ExecutionStatus.COMPLETED, failed: ExecutionStatus.FAILED })
+      .getRawOne<Record<keyof AgentMetricsResponseDto, string | number>>();
+
+    return {
+      totalExecutions: Number(raw?.totalExecutions ?? 0),
+      completedExecutions: Number(raw?.completedExecutions ?? 0),
+      failedExecutions: Number(raw?.failedExecutions ?? 0),
+      totalTokensConsumed: Number(raw?.totalTokensConsumed ?? 0),
+      averageTokensPerExecution: Number(raw?.averageTokensPerExecution ?? 0),
+    };
+  }
+
+  private async findAgent(agentId: string): Promise<Agent> {
+    const agent = await this.agents.findOne({ where: { id: agentId } });
+    if (!agent) throw new NotFoundException(`Agent ${agentId} not found`);
+    return agent;
   }
 
   async getTokensUsed(agentId: string, month: string): Promise<number> {

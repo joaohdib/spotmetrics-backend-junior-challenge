@@ -10,8 +10,12 @@
 - Alinhei a validação do POST com a do PATCH. Assumi que todo agente deve ter um orçamento positivo, então defini o mínimo como 1. Como o enunciado não define um teto de negócio, mantive 2.147.483.647, o maior valor que a coluna de inteiro do PostgreSQL aceita.
 
 ## Problemas e riscos
-- O Swagger do POST de execuções omitia o limite do `input` (1 a 10.000 caracteres) e a resposta `429` por saldo mensal insuficiente. Ambos foram documentados, sem alterar as validações ou o comportamento da rota.
-- Na criação do agente, monthlyTokenLimit só era validado como inteiro. Isso permitia cadastrar agentes com cota zero ou negativa, embora o PATCH já rejeitasse esses valores. Um agente criado assim podia receber 429 logo no primeiro pedido de execução, mesmo sem ter consumido tokens.
+- O Swagger do POST de execuções omitia a faixa de 1 a 10.000 caracteres do `input` e a resposta `429` por saldo mensal insuficiente. Documentei os dois pontos e mantive o comportamento da rota.
+  - **Como validei:** Comparei a documentação com as validações do `CreateExecutionDto` e com o `429` retornado pelo service. Depois da alteração, abri o `/docs` e conferi que o exemplo do `input` aparecia em **Request body** e que o `429` aparecia em **Responses**.
+- Na criação do agente, `monthlyTokenLimit` só era validado como inteiro. Isso permitia cadastrar agentes com cota zero ou negativa, embora o PATCH já rejeitasse esses valores. Com uma cota assim, o agente podia receber `429` no primeiro pedido de execução, mesmo com consumo zerado.
+  - **Como validei:** Comparei os DTOs de criação e atualização. O POST usava apenas `@IsInt()`, enquanto o PATCH também validava a faixa. Conferi no service que uma entrada com pelo menos um token já ultrapassava uma cota zero ou negativa.
+- **Reentrega sem limite de tentativas**: Quando o processamento lança uma exceção, o consumer chama `nack` com `requeue: true` e o RabbitMQ coloca a mensagem de volta na fila. Como o código não limita as tentativas, o worker pode continuar tentando processar a mesma execução enquanto a falha persistir.
+  - **Como validei**: Adicionei temporariamente uma exceção no `executions.consumer.ts` e enviei uma única solicitação de execução. Nos logs, vi o worker tentar processar o mesmo ID várias vezes. Depois que removi o trecho e reiniciei o worker, a mesma execução concluiu normalmente.
 
 
 ## Validação

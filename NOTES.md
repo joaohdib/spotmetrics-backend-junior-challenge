@@ -10,6 +10,9 @@
 - Alinhei a validação do POST com a do PATCH. Assumi que todo agente deve ter um orçamento positivo, então defini o mínimo como 1. Como o enunciado não define um teto de negócio, mantive 2.147.483.647, o maior valor que a coluna de inteiro do PostgreSQL aceita.
 
 ## Problemas e riscos
+- **Falha na atualização do consumo de tokens:** O consumer salvava a execução como `COMPLETED` antes de atualizar o consumo mensal. Se a segunda gravação falhasse, a execução ficava como concluída e os tokens ainda não apareciam no consumo do agente.
+  - **Como validei:** Forcei um erro no consumer logo depois de salvar a execução como `COMPLETED`. Conferi no Postgres que a execução aparecia como concluída, mas o consumo mensal continuava no valor anterior.
+  - **Como resolvi:** Coloquei a conclusão da execução e a atualização do consumo na mesma transação. Depois da correção, simulei a falha novamente no Postgres e confirmei que a execução permaneceu em `PROCESSING` e o consumo ficou inalterado.
 - A admissão de execuções permitia input só com espaços quando o consumo estava exatamente na cota, pois essa entrada conta zero tokens. A checagem agora recusa novos disparos quando o consumo registrado já atingiu ou ultrapassou o limite, além de recusar entradas que excedem o saldo. A admissão considera os tokens de entrada. Os tokens de saída são contabilizados depois e ainda podem fazer a última execução aceita ultrapassar a cota.
   - **Como validei:** Testes unitários no `executions.service.spec.ts` cobrem consumo de 10 ou 11 de 10 tokens com input `" "` (429, sem salvar nem publicar), 9 de 10 com `"oi"` (aceita, salva e publica) e 9 de 10 com `"oi mundo"` (429, sem salvar nem publicar).
 - O Swagger do POST de execuções omitia a faixa de 1 a 10.000 caracteres do `input` e a resposta `429` por saldo mensal insuficiente. Documentei os dois pontos e mantive o comportamento da rota.
@@ -18,7 +21,7 @@
   - **Como validei:** Comparei os DTOs de criação e atualização. O POST usava apenas `@IsInt()`, enquanto o PATCH também validava a faixa. Conferi no service que uma entrada com pelo menos um token já ultrapassava uma cota zero ou negativa.
 - **Reentrega sem limite de tentativas**: Quando o processamento lança uma exceção, o consumer chama `nack` com `requeue: true` e o RabbitMQ coloca a mensagem de volta na fila. Como o código não limita as tentativas, o worker pode continuar tentando processar a mesma execução enquanto a falha persistir.
   - **Como validei**: Adicionei temporariamente uma exceção no `executions.consumer.ts` e enviei uma única solicitação de execução. Nos logs, vi o worker tentar processar o mesmo ID várias vezes. Depois que removi o trecho e reiniciei o worker, a mesma execução concluiu normalmente.
-
+  
 
 ## Validação
 

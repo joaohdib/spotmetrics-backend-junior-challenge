@@ -30,4 +30,13 @@ export const env = {
   get processingDelayMs() {
     return int('PROCESSING_DELAY_MS', 2000);
   },
+  get executionMaxAttempts() {
+    const raw = process.env.EXECUTION_MAX_ATTEMPTS;
+    if (raw === undefined) return 5;
+    const value = Number(raw);
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new Error('EXECUTION_MAX_ATTEMPTS must be a positive integer');
+    }
+    return value;
+  },
 };

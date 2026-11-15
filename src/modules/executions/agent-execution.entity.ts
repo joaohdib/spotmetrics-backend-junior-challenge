@@ -19,6 +19,9 @@ export class AgentExecution {
   @Column({ type: 'varchar', length: 20, default: ExecutionStatus.PENDING })
   status: ExecutionStatus;
 
+  @Column({ type: 'integer', default: 0 })
+  attempts: number;
+
   @Column({ type: 'text', nullable: true })
   error: string | null;
 

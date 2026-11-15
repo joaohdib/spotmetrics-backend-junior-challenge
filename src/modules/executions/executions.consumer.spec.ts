@@ -5,17 +5,132 @@ import { countTokens, simulateAgentOutput } from './tokens';
 describe('ExecutionsConsumer.process', () => {
   beforeEach(() => {
     process.env.PROCESSING_DELAY_MS = '0';
+    process.env.EXECUTION_MAX_ATTEMPTS = '5';
   });
 
   function build(execution: object | null, agent: object | null) {
+    if (execution && !('attempts' in execution)) Object.assign(execution, { attempts: 0 });
     const agents = { findOne: jest.fn().mockResolvedValue(agent) };
-    const executions = { findOne: jest.fn().mockResolvedValue(execution), save: jest.fn(async (x) => x) };
+    const executions = {
+      findOne: jest.fn().mockResolvedValue(execution), save: jest.fn(async (x) => x),
+      update: jest.fn(async (_criteria, values) => {
+        if (execution && ![ExecutionStatus.COMPLETED, ExecutionStatus.FAILED].includes((execution as any).status)) {
+          Object.assign(execution, values);
+          return { affected: 1 };
+        }
+        return { affected: 0 };
+      }),
+    };
     const service = { completeExecution: jest.fn().mockResolvedValue(undefined) };
     const channel = { ack: jest.fn(), nack: jest.fn() };
     const rabbit = { getChannel: jest.fn(() => channel) };
     const consumer = new ExecutionsConsumer(agents as any, executions as any, service as any, rabbit as any);
     return { consumer, executions, service, channel };
   }
+
+  function retryScenario(attempts: number) {
+    const execution = { id: 'e1', agentId: 'a1', input: 'hello', inputTokens: 1,
+      status: ExecutionStatus.PROCESSING, attempts };
+    const mocks = build(execution, { id: 'a1', name: 'Bot' });
+    const msg = { content: Buffer.from(JSON.stringify({ executionId: 'e1' })) };
+    return { ...mocks, execution, msg };
+  }
+
+  it('persiste tentativa e pede reentrega quando falha antes do limite', async () => {
+    const { consumer, execution, executions, service, channel, msg } = retryScenario(0);
+    service.completeExecution.mockRejectedValue(new Error('database write failed'));
+    await consumer['handle'](msg as any);
+    expect(execution.attempts).toBe(1);
+    expect(executions.save).toHaveBeenCalledWith(expect.objectContaining({ attempts: 1, status: ExecutionStatus.PROCESSING }));
+    expect(executions.update).not.toHaveBeenCalled();
+    expect(channel.nack).toHaveBeenCalledWith(msg, false, true);
+    expect(channel.ack).not.toHaveBeenCalled();
+  });
+
+  it('registra FAILED na última falha antes do ACK', async () => {
+    const { consumer, execution, executions, service, channel, msg } = retryScenario(4);
+    service.completeExecution.mockRejectedValue(new Error('usage write failed'));
+    let finish!: () => void;
+    let entered!: () => void;
+    const entering = new Promise<void>((resolve) => { entered = resolve; });
+    const writing = new Promise<void>((resolve) => { finish = resolve; });
+    executions.update.mockImplementationOnce(async (_criteria, values) => {
+      entered();
+      await writing;
+      Object.assign(execution, values);
+      return { affected: 1 };
+    });
+    const handling = consumer['handle'](msg as any);
+    await entering;
+    expect(channel.ack).not.toHaveBeenCalled();
+    expect(channel.nack).not.toHaveBeenCalled();
+    finish();
+    await handling;
+    expect(execution).toEqual(expect.objectContaining({ attempts: 5, status: ExecutionStatus.FAILED,
+      completedAt: expect.any(Date), error: 'Attempt limit reached (5): usage write failed' }));
+    expect(channel.ack).toHaveBeenCalledWith(msg);
+    expect(channel.nack).not.toHaveBeenCalled();
+  });
+
+  it('permite sucesso na última tentativa', async () => {
+    const { consumer, execution, executions, service, channel, msg } = retryScenario(4);
+    service.completeExecution.mockImplementationOnce(async () => {
+      execution.status = ExecutionStatus.COMPLETED;
+    });
+    await consumer['handle'](msg as any);
+    expect(execution.attempts).toBe(5);
+    expect(execution.status).toBe(ExecutionStatus.COMPLETED);
+    expect(service.completeExecution).toHaveBeenCalledTimes(1);
+    expect(executions.update).not.toHaveBeenCalled();
+    expect(channel.ack).toHaveBeenCalledWith(msg);
+  });
+
+  it('finaliza reentrega com contador no limite sem nova tentativa', async () => {
+    const { consumer, execution, executions, service, channel, msg } = retryScenario(5);
+    await consumer['handle'](msg as any);
+    expect(execution).toEqual(expect.objectContaining({ attempts: 5, status: ExecutionStatus.FAILED,
+      completedAt: expect.any(Date), error: 'Attempt limit reached (5)' }));
+    expect(executions.save).not.toHaveBeenCalled();
+    expect(service.completeExecution).not.toHaveBeenCalled();
+    expect(channel.ack).toHaveBeenCalledWith(msg);
+  });
+
+  it.each([4, 5])('pede reentrega se gravar FAILED falhar com contador %s', async (attempts) => {
+    const { consumer, executions, service, channel, msg } = retryScenario(attempts);
+    service.completeExecution.mockRejectedValue(new Error('processing failed'));
+    executions.update.mockRejectedValue(new Error('database unavailable'));
+    await consumer['handle'](msg as any);
+    expect(executions.update).toHaveBeenCalledTimes(1);
+    expect(channel.ack).not.toHaveBeenCalled();
+    expect(channel.nack).toHaveBeenCalledWith(msg, false, true);
+  });
+
+  it('preserva COMPLETED se o commit tiver ocorrido antes do erro', async () => {
+    const { consumer, execution, executions, service, channel, msg } = retryScenario(4);
+    service.completeExecution.mockImplementationOnce(async () => {
+      execution.status = ExecutionStatus.COMPLETED;
+      throw new Error('connection lost after commit');
+    });
+    await consumer['handle'](msg as any);
+    expect(executions.update).toHaveBeenCalledWith(
+      { id: 'e1', status: expect.objectContaining({ value: [ExecutionStatus.PENDING, ExecutionStatus.PROCESSING] }) },
+      expect.objectContaining({ status: ExecutionStatus.FAILED }),
+    );
+    expect(execution.status).toBe(ExecutionStatus.COMPLETED);
+    expect(channel.ack).toHaveBeenCalledWith(msg);
+  });
+
+  it.each([ExecutionStatus.COMPLETED, ExecutionStatus.FAILED])('confirma status final %s sem alterações', async (status) => {
+    const { consumer, execution, executions, service, channel, msg } = retryScenario(5);
+    execution.status = status;
+    const persisted = { ...execution };
+    await consumer['handle'](msg as any);
+    expect(execution).toEqual(persisted);
+    expect(executions.save).not.toHaveBeenCalled();
+    expect(executions.update).not.toHaveBeenCalled();
+    expect(service.completeExecution).not.toHaveBeenCalled();
+    expect(channel.ack).toHaveBeenCalledWith(msg);
+  });
 
   it('completes a pending execution and records token usage', async () => {
     const execution = { id: 'e1', agentId: 'a1', input: 'hello world', inputTokens: 2, status: ExecutionStatus.PENDING };

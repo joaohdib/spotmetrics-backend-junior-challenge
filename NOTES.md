@@ -7,8 +7,10 @@
 - Enquanto o agente estiver inativo, novos pedidos de execução retornam `409 Conflict` antes da consulta à cota. Os jobs que já foram aceitos seguem normalmente, estejam na fila ou em processamento.
 - No GET de listar execuções escolhi apresentar primeiro as execuções mais recentes, pois no `README.md` apesar de especificado que era para ser ordenado por data de criação, não tinha dito por onde iria começar.
 - Para as métricas do agente, escolhi considerar apenas as execuções `COMPLETED` no total de tokens consumidos e na média, porque o consumer registra `totalTokens` quando conclui a execução. O total de execuções continua contando todos os status.
+- Alinhei a validação do POST com a do PATCH. Assumi que todo agente deve ter um orçamento positivo, então defini o mínimo como 1. Como o enunciado não define um teto de negócio, mantive 2.147.483.647, o maior valor que a coluna de inteiro do PostgreSQL aceita.
 
 ## Problemas e riscos
+ - Na criação do agente, monthlyTokenLimit só era validado como inteiro. Isso permitia cadastrar agentes com cota zero ou negativa, embora o PATCH já rejeitasse esses valores. Um agente criado assim podia receber 429 logo no primeiro pedido de execução, mesmo sem ter consumido tokens.
 
 
 ## Validação

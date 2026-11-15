@@ -44,7 +44,8 @@ export class ExecutionsService {
 
     const inputTokens = countTokens(dto.input);
     const used = await this.getTokensUsed(agentId, currentMonth());
-    if (used + inputTokens > agent.monthlyTokenLimit) {
+    const limit = agent.monthlyTokenLimit;
+    if (used >= limit || used + inputTokens > limit) {
       throw new HttpException(
         {
           statusCode: HttpStatus.TOO_MANY_REQUESTS,

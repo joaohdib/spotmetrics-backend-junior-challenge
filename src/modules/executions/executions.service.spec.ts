@@ -54,9 +54,35 @@ describe('ExecutionsService.create', () => {
     await expect(service.create('x', { input: 'hi' })).rejects.toBeInstanceOf(NotFoundException);
   });
 
+  it.each([10, 11])('recusa input com espaços quando o consumo é %s de 10 tokens', async (used) => {
+    const { service, executions, rabbit } = build({ usage: used });
+    await expect(service.create('a1', { input: ' ' })).rejects.toMatchObject({
+      status: 429,
+      response: {
+        statusCode: 429,
+        message: 'Monthly token limit exceeded',
+        monthlyTokenLimit: 10,
+        tokensUsed: used,
+      },
+    });
+    expect(executions.create).not.toHaveBeenCalled();
+    expect(executions.save).not.toHaveBeenCalled();
+    expect(rabbit.publish).not.toHaveBeenCalled();
+  });
+
+  it('aceita um token de entrada quando há exatamente um token de saldo', async () => {
+    const { service, executions, rabbit } = build({ usage: 9 });
+    const result = await service.create('a1', { input: 'oi' });
+    expect(result).toMatchObject({ id: 'e1', status: ExecutionStatus.PENDING, inputTokens: 1 });
+    expect(executions.save).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'a1', input: 'oi', inputTokens: 1 }));
+    expect(rabbit.publish).toHaveBeenCalledWith(expect.any(String), { executionId: 'e1' });
+  });
+
   it('returns 429 when the monthly limit would be exceeded', async () => {
-    const { service, rabbit } = build({ usage: 9 });
-    await expect(service.create('a1', { input: 'one two' })).rejects.toMatchObject({ status: 429 });
+    const { service, executions, rabbit } = build({ usage: 9 });
+    await expect(service.create('a1', { input: 'oi mundo' })).rejects.toMatchObject({ status: 429 });
+    expect(executions.create).not.toHaveBeenCalled();
+    expect(executions.save).not.toHaveBeenCalled();
     expect(rabbit.publish).not.toHaveBeenCalled();
   });
 

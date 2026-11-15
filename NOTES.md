@@ -10,6 +10,8 @@
 - Alinhei a validação do POST com a do PATCH. Assumi que todo agente deve ter um orçamento positivo, então defini o mínimo como 1. Como o enunciado não define um teto de negócio, mantive 2.147.483.647, o maior valor que a coluna de inteiro do PostgreSQL aceita.
 
 ## Problemas e riscos
+- A admissão de execuções permitia input só com espaços quando o consumo estava exatamente na cota, pois essa entrada conta zero tokens. A checagem agora recusa novos disparos quando o consumo registrado já atingiu ou ultrapassou o limite, além de recusar entradas que excedem o saldo. A admissão considera os tokens de entrada. Os tokens de saída são contabilizados depois e ainda podem fazer a última execução aceita ultrapassar a cota.
+  - **Como validei:** Testes unitários no `executions.service.spec.ts` cobrem consumo de 10 ou 11 de 10 tokens com input `" "` (429, sem salvar nem publicar), 9 de 10 com `"oi"` (aceita, salva e publica) e 9 de 10 com `"oi mundo"` (429, sem salvar nem publicar).
 - O Swagger do POST de execuções omitia a faixa de 1 a 10.000 caracteres do `input` e a resposta `429` por saldo mensal insuficiente. Documentei os dois pontos e mantive o comportamento da rota.
   - **Como validei:** Comparei a documentação com as validações do `CreateExecutionDto` e com o `429` retornado pelo service. Depois da alteração, abri o `/docs` e conferi que o exemplo do `input` aparecia em **Request body** e que o `429` aparecia em **Responses**.
 - Na criação do agente, `monthlyTokenLimit` só era validado como inteiro. Isso permitia cadastrar agentes com cota zero ou negativa, embora o PATCH já rejeitasse esses valores. Com uma cota assim, o agente podia receber `429` no primeiro pedido de execução, mesmo com consumo zerado.
@@ -28,3 +30,4 @@
 ## Perguntas para a entrevista
 - Faz sentido permitir a alteração do limite mensal de tokens pelo PATCH? Fiquei em dúvida se esse valor deveria poder mudar depois da criação do agente. Optei por permitir a alteração e preservar o consumo já registrado no mês.
 - A média de tokens deveria considerar todas as execuções registradas ou apenas as concluídas? Como o enunciado não especifica quais status entram na média e o consumer preenche totalTokens na conclusão, optei por considerar apenas as execuções `COMPLETED`.
+- O limite mensal deve funcionar como um teto absoluto ou a última execução aceita pode ultrapassá-lo por causa dos tokens de saída? Mantive o comportamento atual porque o enunciado pede que novos disparos sejam bloqueados quando o consumo registrado já atingiu a cota. Hoje a API verifica se a entrada cabe no saldo, contabiliza a saída ao concluir e recusa novos pedidos com `429` se a cota tiver sido atingida ou ultrapassada.

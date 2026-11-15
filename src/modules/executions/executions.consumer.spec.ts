@@ -32,6 +32,34 @@ describe('ExecutionsConsumer.process', () => {
     }));
   });
 
+  it('confirma reentrega após o commit sem processar nem contabilizar tokens novamente', async () => {
+    const execution = { id: 'e1', agentId: 'a1', input: 'hello', inputTokens: 1, status: ExecutionStatus.PENDING };
+    const { consumer, executions, service, channel } = build(execution, { id: 'a1', name: 'Bot' });
+    service.completeExecution.mockImplementationOnce(async (_id, result) => {
+      Object.assign(execution, result, { status: ExecutionStatus.COMPLETED, completedAt: new Date() });
+    });
+
+    // Simula commit confirmado e queda antes do ACK da primeira entrega.
+    await consumer.process('e1');
+    expect(execution.status).toBe(ExecutionStatus.COMPLETED);
+    expect(service.completeExecution).toHaveBeenCalledTimes(1);
+    expect(channel.ack).not.toHaveBeenCalled();
+    const persistedExecution = { ...execution };
+    executions.findOne.mockClear();
+    executions.save.mockClear();
+
+    const msg = { content: Buffer.from(JSON.stringify({ executionId: 'e1' })), fields: { redelivered: true } };
+    await consumer['handle'](msg as any);
+
+    expect(executions.findOne).toHaveBeenCalledWith({ where: { id: 'e1' } });
+    expect(execution).toEqual(persistedExecution);
+    expect(executions.save).not.toHaveBeenCalled();
+    expect(service.completeExecution).toHaveBeenCalledTimes(1);
+    expect(channel.ack).toHaveBeenCalledTimes(1);
+    expect(channel.ack).toHaveBeenCalledWith(msg);
+    expect(channel.nack).not.toHaveBeenCalled();
+  });
+
   it('fails when the agent does not exist', async () => {
     const execution = { id: 'e1', agentId: 'a1', input: 'x', inputTokens: 1, status: ExecutionStatus.PENDING };
     const { consumer, service } = build(execution, null);

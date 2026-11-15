@@ -10,6 +10,9 @@
 - Alinhei a validação do POST com a do PATCH. Assumi que todo agente deve ter um orçamento positivo, então defini o mínimo como 1. Como o enunciado não define um teto de negócio, mantive 2.147.483.647, o maior valor que a coluna de inteiro do PostgreSQL aceita.
 
 ## Problemas e riscos
+- **Cobrança duplicada após falha antes do ACK:** O worker podia cair depois de salvar a execução como `COMPLETED` e contabilizar os tokens, mas antes de enviar o `ACK`. Nesse caso, o RabbitMQ podia reentregar a mensagem e o worker processava a mesma execução de novo, somando os tokens uma segunda vez.
+  - **Como validei:** No teste, simulei uma execução que foi concluída e contabilizada sem enviar o `ACK`. Depois, reentreguei a mensagem com o mesmo ID e conferi que o worker enviou o `ACK` sem chamar `completeExecution()` de novo.
+  - **Como resolvi:** Adicionei uma checagem no `process()` logo depois de buscar a execução. Se ela já estiver `COMPLETED`, o método retorna e o `handle()` envia o `ACK`. Como a conclusão e o consumo são gravados na mesma transação, os tokens dessa execução já foram contabilizados.
 - **Falha na atualização do consumo de tokens:** O consumer salvava a execução como `COMPLETED` antes de atualizar o consumo mensal. Se a segunda gravação falhasse, a execução ficava como concluída e os tokens ainda não apareciam no consumo do agente.
   - **Como validei:** Forcei um erro no consumer logo depois de salvar a execução como `COMPLETED`. Conferi no Postgres que a execução aparecia como concluída, mas o consumo mensal continuava no valor anterior.
   - **Como resolvi:** Coloquei a conclusão da execução e a atualização do consumo na mesma transação. Depois da correção, simulei a falha novamente no Postgres e confirmei que a execução permaneceu em `PROCESSING` e o consumo ficou inalterado.

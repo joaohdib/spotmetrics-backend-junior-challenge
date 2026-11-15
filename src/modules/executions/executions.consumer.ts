@@ -62,6 +62,8 @@ export class ExecutionsConsumer implements OnModuleInit {
       return;
     }
 
+    if (execution.status === ExecutionStatus.COMPLETED) return;
+
     execution.status = ExecutionStatus.PROCESSING;
     execution.startedAt = new Date();
     await this.executions.save(execution);

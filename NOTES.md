@@ -10,7 +10,8 @@
 - Alinhei a validação do POST com a do PATCH. Assumi que todo agente deve ter um orçamento positivo, então defini o mínimo como 1. Como o enunciado não define um teto de negócio, mantive 2.147.483.647, o maior valor que a coluna de inteiro do PostgreSQL aceita.
 
 ## Problemas e riscos
- - Na criação do agente, monthlyTokenLimit só era validado como inteiro. Isso permitia cadastrar agentes com cota zero ou negativa, embora o PATCH já rejeitasse esses valores. Um agente criado assim podia receber 429 logo no primeiro pedido de execução, mesmo sem ter consumido tokens.
+- O Swagger do POST de execuções omitia o limite do `input` (1 a 10.000 caracteres) e a resposta `429` por saldo mensal insuficiente. Ambos foram documentados, sem alterar as validações ou o comportamento da rota.
+- Na criação do agente, monthlyTokenLimit só era validado como inteiro. Isso permitia cadastrar agentes com cota zero ou negativa, embora o PATCH já rejeitasse esses valores. Um agente criado assim podia receber 429 logo no primeiro pedido de execução, mesmo sem ter consumido tokens.
 
 
 ## Validação

@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
-import { ApiBadRequestResponse, ApiConflictResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
+import { ApiBadRequestResponse, ApiConflictResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiParam, ApiTags, ApiTooManyRequestsResponse } from '@nestjs/swagger';
 import { CreateExecutionDto } from './dto/create-execution.dto';
 import { ListExecutionsQueryDto } from './dto/list-executions-query.dto';
 import { AgentMetricsResponseDto } from './dto/agent-metrics-response.dto';
@@ -12,6 +12,7 @@ export class ExecutionsController {
   constructor(private readonly executionsService: ExecutionsService) {}
 
   @Post('agents/:agentId/executions')
+  @ApiTooManyRequestsResponse({ description: 'Os tokens de entrada excedem o saldo mensal disponível do agente.' })
   @ApiConflictResponse({ description: 'Agente inativo não aceita novas execuções. Reative o agente para continuar.' })
   create(@Param('agentId', ParseUUIDPipe) agentId: string, @Body() dto: CreateExecutionDto) {
     return this.executionsService.create(agentId, dto);

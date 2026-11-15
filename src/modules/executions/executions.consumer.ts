@@ -3,7 +3,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { ConsumeMessage } from 'amqplib';
 import { Repository } from 'typeorm';
 import { Agent } from '../agents/agent.entity';
-import { currentMonth } from '../agents/agents.service';
 import { RabbitMQService } from '../../common/rabbitmq/rabbitmq.service';
 import { AgentExecution } from './agent-execution.entity';
 import { ExecutionStatus } from './execution-status.enum';
@@ -80,14 +79,9 @@ export class ExecutionsConsumer implements OnModuleInit {
     await sleep(this.delayMs);
 
     const output = simulateAgentOutput(agent.name, execution.input);
-    execution.output = output;
-    execution.outputTokens = countTokens(output);
-    execution.totalTokens = execution.inputTokens + execution.outputTokens;
-    execution.status = ExecutionStatus.COMPLETED;
-    execution.completedAt = new Date();
-    await this.executions.save(execution);
-
-    await this.executionsService.addTokensUsed(agent.id, currentMonth(), execution.totalTokens);
-    this.logger.log(`Execution ${execution.id} completed (${execution.totalTokens} tokens)`);
+    const outputTokens = countTokens(output);
+    const totalTokens = execution.inputTokens + outputTokens;
+    await this.executionsService.completeExecution(execution.id, { output, outputTokens, totalTokens });
+    this.logger.log(`Execution ${execution.id} completed (${totalTokens} tokens)`);
   }
 }

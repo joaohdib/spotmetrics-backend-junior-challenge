@@ -1,4 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
+import { AgentMonthlyUsage } from '../agents/agent-monthly-usage.entity';
+import { currentMonth } from '../agents/agents.service';
+import { AgentExecution } from './agent-execution.entity';
 import { ExecutionsService } from './executions.service';
 import { ExecutionStatus } from './execution-status.enum';
 
@@ -24,8 +27,28 @@ function build(overrides: { usage?: number; agent?: object | null; publishFails?
         })
       : jest.fn(),
   };
-  const service = new ExecutionsService(agents as any, executions as any, usage as any, rabbit as any);
-  return { service, agents, executions, usage, rabbit };
+  const transactionalExecutions = {
+    findOne: jest.fn().mockResolvedValue({
+      id: 'e1', agentId: 'a1', inputTokens: 2, status: ExecutionStatus.PROCESSING,
+    }),
+    save: jest.fn(async (x) => x),
+  };
+  const transactionalUsage = {
+    findOne: jest.fn().mockResolvedValue(overrides.usage === undefined ? null : { tokensUsed: overrides.usage }),
+    create: jest.fn((x) => ({ ...x })),
+    save: jest.fn(async (x) => x),
+  };
+  const manager = {
+    getRepository: jest.fn((entity) => {
+      if (entity === AgentExecution) return transactionalExecutions;
+      if (entity === AgentMonthlyUsage) return transactionalUsage;
+      throw new Error('Unexpected repository');
+    }),
+  };
+  // Verifica o uso do manager e a propagação de erros; rollback real é validado no Compose.
+  const dataSource = { transaction: jest.fn(async (callback) => callback(manager)) };
+  const service = new ExecutionsService(agents as any, executions as any, usage as any, rabbit as any, dataSource as any);
+  return { service, agents, executions, usage, rabbit, dataSource, manager, transactionalExecutions, transactionalUsage };
 }
 
 describe('ExecutionsService.create', () => {
@@ -105,5 +128,81 @@ describe('ExecutionsService.addTokensUsed', () => {
     const { service, usage } = build({ usage: 7 });
     await service.addTokensUsed('a1', '2026-09', 5);
     expect(usage.save).toHaveBeenCalledWith(expect.objectContaining({ tokensUsed: 12 }));
+  });
+});
+
+describe('ExecutionsService.completeExecution', () => {
+  const result = { output: 'Bot: hello world', outputTokens: 3, totalTokens: 5 };
+
+  it.each([undefined, 7])('grava resultado e consumo %s usando somente os repositórios da transação', async (used) => {
+    const { service, dataSource, manager, transactionalExecutions, transactionalUsage, executions, usage } = build({ usage: used });
+
+    await service.completeExecution('e1', result);
+
+    expect(dataSource.transaction).toHaveBeenCalledTimes(1);
+    expect(manager.getRepository).toHaveBeenCalledWith(AgentExecution);
+    expect(manager.getRepository).toHaveBeenCalledWith(AgentMonthlyUsage);
+    expect(transactionalExecutions.findOne).toHaveBeenCalledWith({ where: { id: 'e1' } });
+    expect(transactionalExecutions.save).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'e1', ...result, inputTokens: 2, status: ExecutionStatus.COMPLETED, completedAt: expect.any(Date),
+    }));
+    expect(transactionalUsage.findOne).toHaveBeenCalledWith({ where: { agentId: 'a1', month: currentMonth() } });
+    if (used === undefined) {
+      expect(transactionalUsage.create).toHaveBeenCalledWith({ agentId: 'a1', month: currentMonth(), tokensUsed: 0 });
+    } else {
+      expect(transactionalUsage.create).not.toHaveBeenCalled();
+    }
+    expect(transactionalUsage.save).toHaveBeenCalledWith(expect.objectContaining({ tokensUsed: (used ?? 0) + 5 }));
+    expect(transactionalExecutions.save.mock.invocationCallOrder[0]).toBeLessThan(transactionalUsage.save.mock.invocationCallOrder[0]);
+    expect(executions.findOne).not.toHaveBeenCalled();
+    expect(executions.save).not.toHaveBeenCalled();
+    expect(usage.findOne).not.toHaveBeenCalled();
+    expect(usage.create).not.toHaveBeenCalled();
+    expect(usage.save).not.toHaveBeenCalled();
+  });
+
+  it('propaga falha no consumo depois de gravar COMPLETED dentro da transação', async () => {
+    const { service, transactionalExecutions, transactionalUsage } = build({ usage: 7 });
+    const failure = new Error('usage write failed');
+    transactionalUsage.save.mockImplementationOnce(async () => {
+      expect(transactionalExecutions.save).toHaveBeenCalledWith(expect.objectContaining({
+        ...result, status: ExecutionStatus.COMPLETED, completedAt: expect.any(Date),
+      }));
+      throw failure;
+    });
+
+    await expect(service.completeExecution('e1', result)).rejects.toBe(failure);
+    expect(transactionalExecutions.save.mock.invocationCallOrder[0]).toBeLessThan(transactionalUsage.save.mock.invocationCallOrder[0]);
+  });
+
+  it('propaga falha na gravação da execução sem tentar gravar o consumo', async () => {
+    const { service, transactionalExecutions, transactionalUsage } = build();
+    const failure = new Error('execution write failed');
+    transactionalExecutions.save.mockRejectedValueOnce(failure);
+
+    await expect(service.completeExecution('e1', result)).rejects.toBe(failure);
+    expect(transactionalUsage.findOne).not.toHaveBeenCalled();
+    expect(transactionalUsage.save).not.toHaveBeenCalled();
+  });
+
+  it('aguarda a transação e propaga uma falha no commit', async () => {
+    const { service, dataSource, manager, transactionalUsage } = build();
+    const failure = new Error('commit failed');
+    dataSource.transaction.mockImplementationOnce(async (callback) => {
+      await callback(manager);
+      throw failure;
+    });
+
+    await expect(service.completeExecution('e1', result)).rejects.toBe(failure);
+    expect(transactionalUsage.save).toHaveBeenCalled();
+  });
+
+  it('retorna 404 se a execução não existir dentro da transação', async () => {
+    const { service, transactionalExecutions, transactionalUsage } = build();
+    transactionalExecutions.findOne.mockResolvedValueOnce(null);
+
+    await expect(service.completeExecution('missing', result)).rejects.toBeInstanceOf(NotFoundException);
+    expect(transactionalExecutions.save).not.toHaveBeenCalled();
+    expect(transactionalUsage.findOne).not.toHaveBeenCalled();
   });
 });

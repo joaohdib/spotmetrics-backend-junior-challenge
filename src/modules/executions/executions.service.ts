@@ -7,7 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { Agent } from '../agents/agent.entity';
 import { AgentMonthlyUsage } from '../agents/agent-monthly-usage.entity';
 import { currentMonth } from '../agents/agents.service';
@@ -33,6 +33,7 @@ export class ExecutionsService {
     @InjectRepository(AgentExecution) private readonly executions: Repository<AgentExecution>,
     @InjectRepository(AgentMonthlyUsage) private readonly usage: Repository<AgentMonthlyUsage>,
     private readonly rabbit: RabbitMQService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async create(agentId: string, dto: CreateExecutionDto): Promise<AgentExecution> {
@@ -128,12 +129,36 @@ export class ExecutionsService {
     return row?.tokensUsed ?? 0;
   }
 
-  async addTokensUsed(agentId: string, month: string, tokens: number): Promise<void> {
-    let row = await this.usage.findOne({ where: { agentId, month } });
+  async completeExecution(
+    executionId: string,
+    result: Pick<AgentExecution, 'output' | 'outputTokens' | 'totalTokens'>,
+  ): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      const executions = manager.getRepository(AgentExecution);
+      const usage = manager.getRepository(AgentMonthlyUsage);
+      const execution = await executions.findOne({ where: { id: executionId } });
+      if (!execution) throw new NotFoundException(`Execution ${executionId} not found`);
+
+      Object.assign(execution, result, {
+        status: ExecutionStatus.COMPLETED,
+        completedAt: new Date(),
+      }); 
+      await executions.save(execution);
+      await this.addTokensUsed(execution.agentId, currentMonth(), execution.totalTokens, usage);
+    });
+  }
+
+  async addTokensUsed(
+    agentId: string,
+    month: string,
+    tokens: number,
+    usage: Repository<AgentMonthlyUsage> = this.usage,
+  ): Promise<void> {
+    let row = await usage.findOne({ where: { agentId, month } });
     if (!row) {
-      row = this.usage.create({ agentId, month, tokensUsed: 0 });
+      row = usage.create({ agentId, month, tokensUsed: 0 });
     }
     row.tokensUsed += tokens;
-    await this.usage.save(row);
+    await usage.save(row);
   }
 }

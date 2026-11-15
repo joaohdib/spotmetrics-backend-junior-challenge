@@ -1,6 +1,7 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { RabbitMQService } from '../../common/rabbitmq/rabbitmq.service';
 import { Agent } from '../agents/agent.entity';
@@ -47,6 +48,7 @@ describe('GET /agents/:agentId/metrics', () => {
         { provide: getRepositoryToken(AgentExecution), useValue: executions },
         { provide: getRepositoryToken(AgentMonthlyUsage), useValue: {} },
         { provide: RabbitMQService, useValue: {} },
+        { provide: DataSource, useValue: {} },
       ],
     }).compile();
     app = module.createNestApplication();

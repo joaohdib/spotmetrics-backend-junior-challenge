@@ -114,6 +114,7 @@ describe('GET /agents/:agentId/executions', () => {
     [2, undefined, [2, 4], 5],
     [2, ExecutionStatus.COMPLETED, [1], 3],
     [9, ExecutionStatus.COMPLETED, [], 3],
+    [1_000_000, ExecutionStatus.COMPLETED, [], 3],
   ])('pagina no banco: página %s e status %s', async (page, status, sequences: number[], total) => {
     const response = await get(`?page=${page}&limit=2${status ? `&status=${status}` : ''}`);
     expect(response.status).toBe(200);
@@ -156,7 +157,7 @@ describe('GET /agents/:agentId/executions', () => {
 
   it.each([
     'status=INVALID', 'status=completed', 'status=',
-    'page=0', 'page=-1', 'page=1.5', 'page=abc', 'page=',
+    'page=0', 'page=-1', 'page=1.5', 'page=abc', 'page=', 'page=1000001',
     'limit=0', 'limit=-1', 'limit=1.5', 'limit=abc', 'limit=101',
   ])('rejeita query inválida: %s', async (query) => {
     expect((await get(`?${query}`)).status).toBe(400);

@@ -1,8 +1,23 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
-import { ApiBadRequestResponse, ApiBody, ApiNoContentResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiBadRequestResponse, ApiBody, ApiCreatedResponse, ApiNoContentResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { SchemaObject } from '@nestjs/swagger/dist/interfaces/open-api-spec.interface';
 import { AgentsService } from './agents.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
+
+const agentResponseSchema: SchemaObject = {
+  type: 'object',
+  properties: {
+    id: { type: 'string', format: 'uuid' },
+    name: { type: 'string' },
+    description: { type: 'string', nullable: true },
+    systemPrompt: { type: 'string' },
+    active: { type: 'boolean' },
+    monthlyTokenLimit: { type: 'integer' },
+    createdAt: { type: 'string', format: 'date-time' },
+    updatedAt: { type: 'string', format: 'date-time' },
+  },
+};
 
 @ApiTags('agents')
 @Controller('agents')
@@ -11,12 +26,15 @@ export class AgentsController {
 
   @Post()
   @ApiOperation({ summary: 'Cria um agente' })
+  @ApiCreatedResponse({ description: 'Agente criado.', schema: agentResponseSchema })
+  @ApiBadRequestResponse({ description: 'Campos inválidos ou propriedades desconhecidas no body.' })
   create(@Body() dto: CreateAgentDto) {
     return this.agentsService.create(dto);
   }
 
   @Get()
   @ApiOperation({ summary: 'Lista agentes' })
+  @ApiOkResponse({ description: 'Lista de agentes.', schema: { type: 'array', items: agentResponseSchema } })
   findAll() {
     return this.agentsService.findAll();
   }
@@ -26,19 +44,7 @@ export class AgentsController {
   @ApiBody({ type: UpdateAgentDto, description: 'Atualização parcial: campos omitidos são preservados e {} não altera valores.' })
   @ApiOkResponse({
     description: 'Agente atualizado.',
-    schema: {
-      type: 'object',
-      properties: {
-        id: { type: 'string', format: 'uuid' },
-        name: { type: 'string' },
-        description: { type: 'string', nullable: true },
-        systemPrompt: { type: 'string' },
-        active: { type: 'boolean' },
-        monthlyTokenLimit: { type: 'integer' },
-        createdAt: { type: 'string', format: 'date-time' },
-        updatedAt: { type: 'string', format: 'date-time' },
-      },
-    },
+    schema: agentResponseSchema,
   })
   @ApiBadRequestResponse({ description: 'UUID inválido, campos inválidos ou propriedades desconhecidas no body.' })
   @ApiNotFoundResponse({ description: 'Agente não encontrado.' })
@@ -48,6 +54,9 @@ export class AgentsController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Busca agente por id' })
+  @ApiOkResponse({ description: 'Agente encontrado.', schema: agentResponseSchema })
+  @ApiBadRequestResponse({ description: 'UUID inválido.' })
+  @ApiNotFoundResponse({ description: 'Agente não encontrado.' })
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.agentsService.findOne(id);
   }
@@ -65,6 +74,21 @@ export class AgentsController {
   @Get(':id/usage')
   @ApiOperation({ summary: 'Consumo de tokens do agente no mês' })
   @ApiQuery({ name: 'month', required: false, example: '2026-09' })
+  @ApiOkResponse({
+    description: 'Consumo do mês informado; quando omitido, usa o mês atual em UTC.',
+    schema: {
+      type: 'object',
+      properties: {
+        agentId: { type: 'string', format: 'uuid' },
+        month: { type: 'string', example: '2026-09' },
+        monthlyTokenLimit: { type: 'integer' },
+        tokensUsed: { type: 'integer' },
+        tokensRemaining: { type: 'integer' },
+      },
+    },
+  })
+  @ApiBadRequestResponse({ description: 'UUID inválido.' })
+  @ApiNotFoundResponse({ description: 'Agente não encontrado.' })
   usage(@Param('id', ParseUUIDPipe) id: string, @Query('month') month?: string) {
     return this.agentsService.getUsage(id, month);
   }

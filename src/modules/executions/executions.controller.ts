@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
-import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiParam, ApiTags, ApiTooManyRequestsResponse } from '@nestjs/swagger';
+import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiParam, ApiServiceUnavailableResponse, ApiTags, ApiTooManyRequestsResponse } from '@nestjs/swagger';
 import { SchemaObject } from '@nestjs/swagger/dist/interfaces/open-api-spec.interface';
 import { CreateExecutionDto } from './dto/create-execution.dto';
 import { ListExecutionsQueryDto } from './dto/list-executions-query.dto';
@@ -35,6 +35,9 @@ export class ExecutionsController {
   @ApiCreatedResponse({ description: 'Execução criada com status PENDING e enviada para processamento assíncrono.', schema: executionResponseSchema })
   @ApiTooManyRequestsResponse({ description: 'Os tokens de entrada excedem o saldo mensal disponível do agente.' })
   @ApiConflictResponse({ description: 'Agente inativo não aceita novas execuções. Reative o agente para continuar.' })
+  @ApiBadRequestResponse({ description: 'UUID inválido, corpo inválido ou propriedades desconhecidas no body.' })
+  @ApiNotFoundResponse({ description: 'Agente não encontrado.' })
+  @ApiServiceUnavailableResponse({ description: 'Falha ao publicar a execução na fila. Tente novamente mais tarde.' })
   create(@Param('agentId', ParseUUIDPipe) agentId: string, @Body() dto: CreateExecutionDto) {
     return this.executionsService.create(agentId, dto);
   }
@@ -61,6 +64,9 @@ export class ExecutionsController {
   }
 
   @Get('executions/:id')
+  @ApiBadRequestResponse({ description: 'UUID inválido.' })
+  @ApiOkResponse({ description: 'Execução encontrada.', schema: executionResponseSchema })
+  @ApiNotFoundResponse({ description: 'Execução não encontrada para o UUID informado.' })
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.executionsService.findOne(id);
   }

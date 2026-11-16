@@ -8,12 +8,13 @@ import { AgentsService, currentMonth } from './agents.service';
 
 const agentId = '690b224a-f858-4ed1-a430-b899a7e27f85';
 
-describe('AgentsController: PATCH e DELETE /agents/:id', () => {
+describe('AgentsController: criação, atualização e desativação de agentes', () => {
   let app: INestApplication;
   let baseUrl: string;
   let agent: Agent;
   const consumption = { agentId, month: currentMonth(), tokensUsed: 700 };
   const agents = {
+    create: jest.fn((dto) => ({ ...dto })),
     findOne: jest.fn(),
     // Repository.merge ignora valores undefined, incluindo campos omitidos do DTO.
     merge: jest.fn((entity, dto) => Object.assign(
@@ -68,6 +69,53 @@ describe('AgentsController: PATCH e DELETE /agents/:id', () => {
       body: JSON.stringify(body),
     });
   }
+
+  describe('POST /agents', () => {
+    function create(monthlyTokenLimit: number) {
+      return fetch(`${baseUrl}/agents`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Novo agente', description: 'Descrição', systemPrompt: 'Ajude o usuário.', monthlyTokenLimit }),
+      });
+    }
+
+    it('cria com cota mínima e active true quando omitido', async () => {
+      const input = { name: 'Novo agente', description: 'Descrição', systemPrompt: 'Ajude o usuário.', monthlyTokenLimit: 1 };
+      const created = { ...agent, ...input, active: true };
+      agents.save.mockResolvedValueOnce(created);
+
+      const response = await create(1);
+
+      expect(response.status).toBe(201);
+      expect(await response.json()).toEqual(JSON.parse(JSON.stringify(created)));
+      expect(agents.create).toHaveBeenCalledWith({ ...input, active: true });
+      expect(agents.save).toHaveBeenCalledTimes(1);
+      expect(agents.save).toHaveBeenCalledWith({ ...input, active: true });
+    });
+
+    it('preserva active false informado na criação', async () => {
+      const input = { name: 'Novo agente', description: 'Descrição', systemPrompt: 'Ajude o usuário.', monthlyTokenLimit: 1, active: false };
+      agents.save.mockImplementationOnce(async (entity) => ({ ...agent, ...entity }));
+
+      const response = await fetch(`${baseUrl}/agents`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+
+      expect(response.status).toBe(201);
+      expect(await response.json()).toMatchObject(input);
+      expect(agents.create).toHaveBeenCalledWith(input);
+      expect(agents.save).toHaveBeenCalledWith(input);
+    });
+
+    it.each([0, -1, 2_147_483_648])('rejeita cota %s antes de salvar', async (limit) => {
+      const response = await create(limit);
+      expect(response.status).toBe(400);
+      expect(agents.create).not.toHaveBeenCalled();
+      expect(agents.save).not.toHaveBeenCalled();
+    });
+  });
 
   describe('DELETE /agents/:id', () => {
     function deactivate(id = agentId) {

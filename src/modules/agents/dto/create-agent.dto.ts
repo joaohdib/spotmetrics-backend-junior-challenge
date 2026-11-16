@@ -23,7 +23,7 @@ export class CreateAgentDto {
   @IsBoolean()
   active?: boolean;
 
-  @ApiProperty({ example: 10000, description: 'Limite mensal de tokens do agente' })
+  @ApiProperty({ type: 'integer', minimum: 1, maximum: 2_147_483_647, example: 10000, description: 'Limite mensal de tokens do agente' })
   @IsInt()
   @Min(1)
   @Max(2_147_483_647)

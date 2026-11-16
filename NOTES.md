@@ -10,7 +10,7 @@
 - Alinhei a validação do POST com a do PATCH. Assumi que todo agente deve ter um orçamento positivo, então defini o mínimo como 1. Como o enunciado não define um teto de negócio, mantive 2.147.483.647, o maior valor que a coluna de inteiro do PostgreSQL aceita.
 
 ## Problemas e riscos
-
+- **Cobertura da criação de agentes:** O `POST /agents` já existia no código original, mas não tinha testes automatizados. Adicionei testes para conferir que um cadastro válido retorna `201` e que cotas fora da faixa retornam `400`. Também conferi que o agente começa ativo quando `active` é omitido e que é criado como inativo quando envio `active: false`.
 - **Mensagem inválida podia derrubar o worker:** O worker só verificava se a mensagem era um JSON válido. Se o `executionId` estivesse ausente, ele podia consultar o banco sem o filtro de ID e acabar processando outra execução. Se o payload fosse `null`, o worker podia cair ao tentar acessar o ID.
   - **Como resolvi:** Passei a validar o payload e a conferir se o `executionId` é um UUID válido antes de consultar o banco. Se a mensagem for inválida, o worker registra um aviso e envia um `NACK` sem reentrega.
 - **Execução pode ficar `PENDING` sem mensagem na fila:** A API salva a execução no Postgres antes de publicar no RabbitMQ. Identifiquei pelo código que, se a API cair nesse intervalo, a execução fica `PENDING` e o worker nunca recebe a mensagem.

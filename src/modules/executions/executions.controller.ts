@@ -1,10 +1,30 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
-import { ApiBadRequestResponse, ApiConflictResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiParam, ApiTags, ApiTooManyRequestsResponse } from '@nestjs/swagger';
+import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiParam, ApiTags, ApiTooManyRequestsResponse } from '@nestjs/swagger';
+import { SchemaObject } from '@nestjs/swagger/dist/interfaces/open-api-spec.interface';
 import { CreateExecutionDto } from './dto/create-execution.dto';
 import { ListExecutionsQueryDto } from './dto/list-executions-query.dto';
 import { AgentMetricsResponseDto } from './dto/agent-metrics-response.dto';
 import { ExecutionStatus } from './execution-status.enum';
 import { ExecutionsService } from './executions.service';
+
+const executionResponseSchema: SchemaObject = {
+  type: 'object',
+  properties: {
+    id: { type: 'string', format: 'uuid' },
+    agentId: { type: 'string', format: 'uuid' },
+    input: { type: 'string' },
+    output: { type: 'string', nullable: true },
+    status: { type: 'string', enum: Object.values(ExecutionStatus) },
+    attempts: { type: 'integer' },
+    error: { type: 'string', nullable: true },
+    inputTokens: { type: 'integer' },
+    outputTokens: { type: 'integer' },
+    totalTokens: { type: 'integer' },
+    createdAt: { type: 'string', format: 'date-time' },
+    startedAt: { type: 'string', format: 'date-time', nullable: true },
+    completedAt: { type: 'string', format: 'date-time', nullable: true },
+  },
+};
 
 @ApiTags('executions')
 @Controller()
@@ -12,6 +32,7 @@ export class ExecutionsController {
   constructor(private readonly executionsService: ExecutionsService) {}
 
   @Post('agents/:agentId/executions')
+  @ApiCreatedResponse({ description: 'Execução criada com status PENDING e enviada para processamento assíncrono.', schema: executionResponseSchema })
   @ApiTooManyRequestsResponse({ description: 'Os tokens de entrada excedem o saldo mensal disponível do agente.' })
   @ApiConflictResponse({ description: 'Agente inativo não aceita novas execuções. Reative o agente para continuar.' })
   create(@Param('agentId', ParseUUIDPipe) agentId: string, @Body() dto: CreateExecutionDto) {
@@ -26,23 +47,7 @@ export class ExecutionsController {
     schema: {
       type: 'object',
       properties: {
-        items: { type: 'array', items: {
-          type: 'object',
-          properties: {
-            id: { type: 'string', format: 'uuid' },
-            agentId: { type: 'string', format: 'uuid' },
-            input: { type: 'string' },
-            output: { type: 'string', nullable: true },
-            status: { type: 'string', enum: Object.values(ExecutionStatus) },
-            error: { type: 'string', nullable: true },
-            inputTokens: { type: 'integer' },
-            outputTokens: { type: 'integer' },
-            totalTokens: { type: 'integer' },
-            createdAt: { type: 'string', format: 'date-time' },
-            startedAt: { type: 'string', format: 'date-time', nullable: true },
-            completedAt: { type: 'string', format: 'date-time', nullable: true },
-          },
-        } },
+        items: { type: 'array', items: executionResponseSchema },
         page: { type: 'integer', example: 1 },
         limit: { type: 'integer', example: 10 },
         total: { type: 'integer', example: 0 },

@@ -33,7 +33,7 @@ export class ExecutionsController {
 
   @Post('agents/:agentId/executions')
   @ApiCreatedResponse({ description: 'Execução criada com status PENDING e enviada para processamento assíncrono.', schema: executionResponseSchema })
-  @ApiTooManyRequestsResponse({ description: 'Os tokens de entrada excedem o saldo mensal disponível do agente.' })
+  @ApiTooManyRequestsResponse({ description: 'O consumo mensal já atingiu ou ultrapassou o limite, ou os tokens de entrada excedem o saldo disponível do agente.' })
   @ApiConflictResponse({ description: 'Agente inativo não aceita novas execuções. Reative o agente para continuar.' })
   @ApiBadRequestResponse({ description: 'UUID inválido, corpo inválido ou propriedades desconhecidas no body.' })
   @ApiNotFoundResponse({ description: 'Agente não encontrado.' })

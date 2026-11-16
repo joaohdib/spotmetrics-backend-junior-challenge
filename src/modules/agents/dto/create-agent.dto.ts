@@ -13,7 +13,7 @@ export class CreateAgentDto {
   @IsString()
   description?: string;
 
-  @ApiProperty({ example: 'Você é um assistente de suporte cordial.' })
+  @ApiProperty({ example: 'Você é um assistente de suporte cordial.', minLength: 1 })
   @IsString()
   @MinLength(1)
   systemPrompt: string;

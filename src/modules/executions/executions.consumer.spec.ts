@@ -2,6 +2,8 @@ import { ExecutionsConsumer } from './executions.consumer';
 import { ExecutionStatus } from './execution-status.enum';
 import { countTokens, simulateAgentOutput } from './tokens';
 
+const executionId = '690b224a-f858-4ed1-a430-b899a7e27f85';
+
 describe('ExecutionsConsumer.process', () => {
   beforeEach(() => {
     process.env.PROCESSING_DELAY_MS = '0';
@@ -28,11 +30,53 @@ describe('ExecutionsConsumer.process', () => {
     return { consumer, executions, service, channel };
   }
 
+  it.each([
+    ['JSON malformado', '{'],
+    ['payload nulo', 'null'],
+    ['ID ausente', '{}'],
+    ['UUID inválido', '{"executionId":"not-a-uuid"}'],
+    ['ID numérico', '{"executionId":123}'],
+    ['ID nulo', '{"executionId":null}'],
+    ['array', '[]'],
+    ['valor primitivo', 'true'],
+  ])('rejeita %s sem reentrega nem consulta ao repositório', async (_scenario, content) => {
+    const { consumer, executions, channel } = build(null, null);
+    const processing = jest.spyOn(consumer, 'process');
+    const warning = jest.spyOn(consumer['logger'], 'warn').mockImplementation(() => {});
+    const msg = { content: Buffer.from(content) };
+
+    await consumer['handle'](msg as any);
+
+    expect(warning).toHaveBeenCalledTimes(1);
+    expect(channel.nack).toHaveBeenCalledTimes(1);
+    expect(channel.nack).toHaveBeenCalledWith(msg, false, false);
+    expect(channel.ack).not.toHaveBeenCalled();
+    expect(processing).not.toHaveBeenCalled();
+    expect(executions.findOne).not.toHaveBeenCalled();
+    expect(executions.save).not.toHaveBeenCalled();
+    expect(executions.update).not.toHaveBeenCalled();
+  });
+
+  it('encaminha UUID válido ao process e confirma execução não encontrada', async () => {
+    const { consumer, executions, channel } = build(null, null);
+    const processing = jest.spyOn(consumer, 'process');
+    const msg = { content: Buffer.from(JSON.stringify({ executionId })) };
+
+    await consumer['handle'](msg as any);
+
+    expect(processing).toHaveBeenCalledTimes(1);
+    expect(processing).toHaveBeenCalledWith(executionId);
+    expect(executions.findOne).toHaveBeenCalledWith({ where: { id: executionId } });
+    expect(executions.save).not.toHaveBeenCalled();
+    expect(channel.ack).toHaveBeenCalledWith(msg);
+    expect(channel.nack).not.toHaveBeenCalled();
+  });
+
   function retryScenario(attempts: number) {
-    const execution = { id: 'e1', agentId: 'a1', input: 'hello', inputTokens: 1,
+    const execution = { id: executionId, agentId: 'a1', input: 'hello', inputTokens: 1,
       status: ExecutionStatus.PROCESSING, attempts };
     const mocks = build(execution, { id: 'a1', name: 'Bot' });
-    const msg = { content: Buffer.from(JSON.stringify({ executionId: 'e1' })) };
+    const msg = { content: Buffer.from(JSON.stringify({ executionId: executionId })) };
     return { ...mocks, execution, msg };
   }
 
@@ -113,7 +157,7 @@ describe('ExecutionsConsumer.process', () => {
     });
     await consumer['handle'](msg as any);
     expect(executions.update).toHaveBeenCalledWith(
-      { id: 'e1', status: expect.objectContaining({ value: [ExecutionStatus.PENDING, ExecutionStatus.PROCESSING] }) },
+      { id: executionId, status: expect.objectContaining({ value: [ExecutionStatus.PENDING, ExecutionStatus.PROCESSING] }) },
       expect.objectContaining({ status: ExecutionStatus.FAILED }),
     );
     expect(execution.status).toBe(ExecutionStatus.COMPLETED);
@@ -133,14 +177,14 @@ describe('ExecutionsConsumer.process', () => {
   });
 
   it('completes a pending execution and records token usage', async () => {
-    const execution = { id: 'e1', agentId: 'a1', input: 'hello world', inputTokens: 2, status: ExecutionStatus.PENDING };
+    const execution = { id: executionId, agentId: 'a1', input: 'hello world', inputTokens: 2, status: ExecutionStatus.PENDING };
     const { consumer, executions, service } = build(execution, { id: 'a1', name: 'Bot', active: true });
 
-    await consumer.process('e1');
+    await consumer.process(executionId);
 
     const output = simulateAgentOutput('Bot', execution.input);
     const outputTokens = countTokens(output);
-    expect(service.completeExecution).toHaveBeenCalledWith('e1', { output, outputTokens, totalTokens: 2 + outputTokens });
+    expect(service.completeExecution).toHaveBeenCalledWith(executionId, { output, outputTokens, totalTokens: 2 + outputTokens });
     expect(executions.save).toHaveBeenCalledTimes(1);
     expect(executions.save).toHaveBeenCalledWith(expect.objectContaining({
       status: ExecutionStatus.PROCESSING, startedAt: expect.any(Date),
@@ -148,14 +192,14 @@ describe('ExecutionsConsumer.process', () => {
   });
 
   it('confirma reentrega após o commit sem processar nem contabilizar tokens novamente', async () => {
-    const execution = { id: 'e1', agentId: 'a1', input: 'hello', inputTokens: 1, status: ExecutionStatus.PENDING };
+    const execution = { id: executionId, agentId: 'a1', input: 'hello', inputTokens: 1, status: ExecutionStatus.PENDING };
     const { consumer, executions, service, channel } = build(execution, { id: 'a1', name: 'Bot' });
     service.completeExecution.mockImplementationOnce(async (_id, result) => {
       Object.assign(execution, result, { status: ExecutionStatus.COMPLETED, completedAt: new Date() });
     });
 
     // Simula commit confirmado e queda antes do ACK da primeira entrega.
-    await consumer.process('e1');
+    await consumer.process(executionId);
     expect(execution.status).toBe(ExecutionStatus.COMPLETED);
     expect(service.completeExecution).toHaveBeenCalledTimes(1);
     expect(channel.ack).not.toHaveBeenCalled();
@@ -163,10 +207,10 @@ describe('ExecutionsConsumer.process', () => {
     executions.findOne.mockClear();
     executions.save.mockClear();
 
-    const msg = { content: Buffer.from(JSON.stringify({ executionId: 'e1' })), fields: { redelivered: true } };
+    const msg = { content: Buffer.from(JSON.stringify({ executionId: executionId })), fields: { redelivered: true } };
     await consumer['handle'](msg as any);
 
-    expect(executions.findOne).toHaveBeenCalledWith({ where: { id: 'e1' } });
+    expect(executions.findOne).toHaveBeenCalledWith({ where: { id: executionId } });
     expect(execution).toEqual(persistedExecution);
     expect(executions.save).not.toHaveBeenCalled();
     expect(service.completeExecution).toHaveBeenCalledTimes(1);
@@ -176,10 +220,10 @@ describe('ExecutionsConsumer.process', () => {
   });
 
   it('fails when the agent does not exist', async () => {
-    const execution = { id: 'e1', agentId: 'a1', input: 'x', inputTokens: 1, status: ExecutionStatus.PENDING };
+    const execution = { id: executionId, agentId: 'a1', input: 'x', inputTokens: 1, status: ExecutionStatus.PENDING };
     const { consumer, service } = build(execution, null);
 
-    await consumer.process('e1');
+    await consumer.process(executionId);
 
     expect(execution.status).toBe(ExecutionStatus.FAILED);
     expect(service.completeExecution).not.toHaveBeenCalled();
@@ -188,13 +232,13 @@ describe('ExecutionsConsumer.process', () => {
   it.each([ExecutionStatus.PENDING, ExecutionStatus.PROCESSING])(
     'conclui execução já aceita com status %s mesmo com agente inativo',
     async (status) => {
-      const execution = { id: 'e1', agentId: 'a1', input: 'hello world', inputTokens: 2, status };
+      const execution = { id: executionId, agentId: 'a1', input: 'hello world', inputTokens: 2, status };
       const { consumer, executions, service } = build(execution, { id: 'a1', name: 'Bot', active: false });
 
-      await consumer.process('e1');
+      await consumer.process(executionId);
 
       expect(executions.save).toHaveBeenCalledTimes(1);
-      expect(service.completeExecution).toHaveBeenCalledWith('e1', {
+      expect(service.completeExecution).toHaveBeenCalledWith(executionId, {
         output: expect.any(String), outputTokens: expect.any(Number), totalTokens: expect.any(Number),
       });
     },
@@ -209,7 +253,7 @@ describe('ExecutionsConsumer.process', () => {
   });
 
   it('só envia ACK depois de completeExecution resolver (commit)', async () => {
-    const execution = { id: 'e1', agentId: 'a1', input: 'hello', inputTokens: 1, status: ExecutionStatus.PENDING };
+    const execution = { id: executionId, agentId: 'a1', input: 'hello', inputTokens: 1, status: ExecutionStatus.PENDING };
     const { consumer, service, channel } = build(execution, { id: 'a1', name: 'Bot' });
     let commit!: () => void;
     let entered: () => void;
@@ -219,7 +263,7 @@ describe('ExecutionsConsumer.process', () => {
       entered();
       return committed;
     });
-    const msg = { content: Buffer.from(JSON.stringify({ executionId: 'e1' })) };
+    const msg = { content: Buffer.from(JSON.stringify({ executionId: executionId })) };
 
     const handling = consumer['handle'](msg as any);
     await committing;
@@ -233,13 +277,13 @@ describe('ExecutionsConsumer.process', () => {
   });
 
   it('propaga falha na conclusão para handle pedir reentrega sem ACK', async () => {
-    const execution = { id: 'e1', agentId: 'a1', input: 'hello', inputTokens: 1, status: ExecutionStatus.PROCESSING };
+    const execution = { id: executionId, agentId: 'a1', input: 'hello', inputTokens: 1, status: ExecutionStatus.PROCESSING };
     const { consumer, service, channel } = build(execution, { id: 'a1', name: 'Bot' });
     const failure = new Error('usage write failed');
     service.completeExecution.mockRejectedValue(failure);
 
-    await expect(consumer.process('e1')).rejects.toBe(failure);
-    const msg = { content: Buffer.from(JSON.stringify({ executionId: 'e1' })) };
+    await expect(consumer.process(executionId)).rejects.toBe(failure);
+    const msg = { content: Buffer.from(JSON.stringify({ executionId: executionId })) };
     await consumer['handle'](msg as any);
 
     expect(channel.ack).not.toHaveBeenCalled();

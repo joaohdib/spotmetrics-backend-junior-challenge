@@ -1,13 +1,14 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ConsumeMessage } from 'amqplib';
+import { isUUID } from 'class-validator';
 import { In, Repository } from 'typeorm';
 import { env } from '../../config/env';
 import { Agent } from '../agents/agent.entity';
 import { RabbitMQService } from '../../common/rabbitmq/rabbitmq.service';
 import { AgentExecution } from './agent-execution.entity';
 import { ExecutionStatus } from './execution-status.enum';
-import { ExecutionMessage, ExecutionsService } from './executions.service';
+import { ExecutionsService } from './executions.service';
 import { countTokens, simulateAgentOutput } from './tokens';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -39,20 +40,28 @@ export class ExecutionsConsumer implements OnModuleInit {
     if (!msg) return;
     const channel = this.rabbit.getChannel();
 
-    let payload: ExecutionMessage;
+    let payload: unknown;
     try {
-      payload = JSON.parse(msg.content.toString()) as ExecutionMessage;
+      payload = JSON.parse(msg.content.toString());
     } catch {
       this.logger.warn('Discarding malformed message');
       channel.nack(msg, false, false);
       return;
     }
 
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload) ||
+      !('executionId' in payload) || typeof payload.executionId !== 'string' || !isUUID(payload.executionId)) {
+      this.logger.warn('Discarding invalid execution message');
+      channel.nack(msg, false, false);
+      return;
+    }
+
+    const { executionId } = payload;
     try {
-      await this.process(payload.executionId);
+      await this.process(executionId);
       channel.ack(msg);
     } catch (err) {
-      this.logger.error(`Error processing ${payload.executionId}, requeueing`, (err as Error).stack);
+      this.logger.error(`Error processing ${executionId}, requeueing`, (err as Error).stack);
       channel.nack(msg, false, true);
     }
   }
